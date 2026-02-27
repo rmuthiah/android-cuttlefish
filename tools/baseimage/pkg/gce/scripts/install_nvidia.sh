@@ -37,7 +37,7 @@ kmodver=$(dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
 apt-get install -y wget
 
 # Dependencies for nvidia-installer
-apt-get install -y \
+apt-get install -y -t trixie-backports \
   $(echo linux-headers-${kmodver}) \
   dkms \
   libglvnd-dev \

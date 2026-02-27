@@ -79,9 +79,9 @@ sudo chroot /mnt/image /usr/bin/apt install -y screen # needed by tradefed
 sudo chroot /mnt/image /usr/bin/find /home -ls
 
 # update QEMU version to most recent backport
-sudo chroot /mnt/image /usr/bin/apt install -y --only-upgrade qemu-system-x86
-sudo chroot /mnt/image /usr/bin/apt install -y --only-upgrade qemu-system-arm
-sudo chroot /mnt/image /usr/bin/apt install -y --only-upgrade qemu-system-misc
+sudo chroot /mnt/image /usr/bin/apt install -y --only-upgrade qemu-system-x86 -t trixie-backports
+sudo chroot /mnt/image /usr/bin/apt install -y --only-upgrade qemu-system-arm -t trixie-backports
+sudo chroot /mnt/image /usr/bin/apt install -y --only-upgrade qemu-system-misc -t trixie-backports
 
 # Install GPU driver dependencies
 sudo cp install_nvidia.sh /mnt/image/
@@ -89,11 +89,11 @@ sudo chroot /mnt/image /usr/bin/bash install_nvidia.sh
 sudo rm /mnt/image/install_nvidia.sh
 
 # Vulkan loader
-sudo chroot /mnt/image /usr/bin/apt install -y libvulkan1
+sudo chroot /mnt/image /usr/bin/apt install -y libvulkan1 -t trixie-backports
 
 # Wayland-server needed to have Nvidia driver fail gracefully when attempting to
 # use the EGL API on GCE instances without a GPU.
-sudo chroot /mnt/image /usr/bin/apt install -y libwayland-server0
+sudo chroot /mnt/image /usr/bin/apt install -y libwayland-server0 -t trixie-backports
 
 # Clean up the builder's version of resolv.conf
 sudo rm /mnt/image/etc/resolv.conf
