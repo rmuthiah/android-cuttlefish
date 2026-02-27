@@ -29,28 +29,30 @@ arch=$(uname -m)
 sudo apt-get update
 sudo apt-get upgrade -y
 
-version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2 )
-echo "START VERSION: ${version}"
-
 sudo chroot /mnt/image /usr/bin/apt-get update
 sudo chroot /mnt/image /usr/bin/apt-get upgrade -y
 
-version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2 )
-echo "AFTER UPGRADE VERSION: ${version}"
+# Run the installation inside the chroot
+echo "Installing kernel from trixie backports"
+sudo chroot /mnt/image /usr/bin/apt-get install -t trixie-backports -y ${linux_image_deb}
 
-sudo chroot /mnt/image /usr/bin/apt-get install -y ${linux_image_deb}
-
-version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2)
-echo "END VERSION: ${version}"
-
-if [ "${version}" != "${linux_image_deb}" ]; then
+if ! sudo chroot /mnt/image /usr/bin/dpkg -s "${linux_image_deb}" >/dev/null 2>&1; then
   echo "CREATE IMAGE FAILED!!!"
-  echo "Expected ${linux_image_deb}, got: ${version}"
+  echo "Expected ${linux_image_deb} to be installed, but it is missing. Aborting purge."
   exit 1
 fi
+echo "Verification passed: ${linux_image_deb} installed successfully."
+
+installed_kernels=$(sudo chroot /mnt/image /usr/bin/dpkg-query -W -f='${Package}\n' 'linux-image-[0-9]*' 2>/dev/null)
+
+for kernel in $installed_kernels; do
+  if [[ "$kernel" != "${linux_image_deb}" ]]; then
+    echo "Deleting former kernel: $kernel"
+    sudo chroot /mnt/image /usr/bin/apt-get --purge -y remove "$kernel"
+  fi
+done
+
+echo "END: Kernel update complete. ${linux_image_deb} is the only kernel remaining."
 
 # Skip unmounting:
 #  Sometimes systemd starts, making it hard to unmount
