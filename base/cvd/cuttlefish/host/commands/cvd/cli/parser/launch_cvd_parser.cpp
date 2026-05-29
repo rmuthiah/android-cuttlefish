@@ -66,6 +66,10 @@ Result<std::vector<std::string>> GenerateCfFlags(
     flags.emplace_back(GenerateFlag("netsim_uwb", launch.netsim_uwb()));
   }
 
+  if (launch.has_netsim_args()) {
+    flags.emplace_back(GenerateFlag("netsim_args", launch.netsim_args()));
+  }
+
   flags = MergeResults(std::move(flags), GenerateMetricsFlags(launch));
   flags = MergeResults(std::move(flags), CF_EXPECT(GenerateInstancesFlags(launch)));
   auto flag_op = GenerateUndefOkFlag(flags);

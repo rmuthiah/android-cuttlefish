@@ -175,6 +175,33 @@ TEST(BootFlagsParserTest, ParseNetSimFlagEnabled) {
       << "netsim_uwb flag is missing or wrongly formatted";
 }
 
+TEST(BootFlagsParserTest, ParseNetSimArgs) {
+  const char* test_string = R""""(
+{
+   "netsim_args": "--wifi-instance=1 --bt-instance=2",
+     "instances" :
+     [
+        {
+          "vm": {
+            "crosvm":{
+            }
+          }
+        }
+      ]
+}
+  )"""";
+
+  Json::Value json_configs;
+  std::string json_text(test_string);
+
+  EXPECT_TRUE(ParseJsonString(json_text, json_configs))
+      << "Invalid Json string";
+  auto serialized_data = LaunchCvdParserTester(json_configs);
+  EXPECT_TRUE(serialized_data.ok()) << serialized_data.error().Trace();
+  EXPECT_TRUE(FindConfig(*serialized_data, "--netsim_args=--wifi-instance=1 --bt-instance=2"))
+      << "netsim_args flag is missing or wrongly formatted";
+}
+
 TEST(CvdLoadFlagsTest, CredentialSourceSetter) {
   LoadFlags load_flags;
 
