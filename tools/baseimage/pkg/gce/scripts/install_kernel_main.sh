@@ -31,28 +31,28 @@ APT_GET="sudo chroot /mnt/image /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr
 sudo DEBIAN_FRONTEND=noninteractive apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
-version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2 )
+version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -l | grep '^ii' | \
+  awk '{print $2}' | grep '^linux-image-[0-9]' | paste -sd' ' - || true)
 echo "START VERSION: ${version}"
 
 ${APT_GET} update
 ${APT_GET} upgrade
 
-version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2 )
+version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -l | grep '^ii' | \
+  awk '{print $2}' | grep '^linux-image-[0-9]' | paste -sd' ' - || true)
 echo "AFTER UPGRADE VERSION: ${version}"
 
 ${APT_GET} install ${linux_image_deb}
 
-version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
-  cut -d: -f2 | cut -d" " -f2)
-echo "END VERSION: ${version}"
-
-if [ "${version}" != "${linux_image_deb}" ]; then
+if ! sudo chroot /mnt/image /usr/bin/dpkg -s "${linux_image_deb}" >/dev/null 2>&1; then
   echo "CREATE IMAGE FAILED!!!"
-  echo "Expected ${linux_image_deb}, got: ${version}"
+  echo "Package ${linux_image_deb} is not installed"
   exit 1
 fi
+
+installed_kernel=$(sudo chroot /mnt/image/ /usr/bin/dpkg -l | grep '^ii' | \
+  awk '{print $2}' | grep '^linux-image-[0-9]' | paste -sd' ' - || true)
+echo "END VERSION: ${installed_kernel}"
 
 # Remove old kernel packages, keeping only the target kernel and the
 # linux-image-cloud-${arch} meta-package.
