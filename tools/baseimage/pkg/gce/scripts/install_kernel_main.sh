@@ -54,10 +54,19 @@ installed_kernel=$(sudo chroot /mnt/image/ /usr/bin/dpkg -l | grep '^ii' | \
   awk '{print $2}' | grep '^linux-image-[0-9]' | paste -sd' ' - || true)
 echo "END VERSION: ${installed_kernel}"
 
-# Remove old kernel packages, keeping only the target kernel and the
-# linux-image-cloud-${arch} meta-package.
-old_kernels=$(sudo chroot /mnt/image /usr/bin/dpkg -l | grep '^ii' | awk '{print $2}' | \
-  grep '^linux-image-' | grep -v "^${linux_image_deb}$" | grep -v "^linux-image-cloud-${arch}$" || true)
+# Check if metapackage matches the target kernel
+metapkg_dep=$(sudo chroot /mnt/image /usr/bin/dpkg -s "linux-image-cloud-${arch}" 2>/dev/null | grep ^Depends: | \
+  cut -d: -f2 | cut -d" " -f2 || true)
+
+# Remove old kernel packages. If the metapackage does not depend on the target kernel,
+# remove the metapackage as well so apt doesn't pull in a stock Debian kernel.
+if [ "${metapkg_dep}" != "${linux_image_deb}" ]; then
+  old_kernels=$(sudo chroot /mnt/image /usr/bin/dpkg -l | grep '^ii' | awk '{print $2}' | \
+    grep '^linux-image-' | grep -v "^${linux_image_deb}$" || true)
+else
+  old_kernels=$(sudo chroot /mnt/image /usr/bin/dpkg -l | grep '^ii' | awk '{print $2}' | \
+    grep '^linux-image-' | grep -v "^${linux_image_deb}$" | grep -v "^linux-image-cloud-${arch}$" || true)
+fi
 if [ -n "${old_kernels}" ]; then
   echo "Removing old kernel packages: ${old_kernels}"
   ${APT_GET} purge ${old_kernels}
