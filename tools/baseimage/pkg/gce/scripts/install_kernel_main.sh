@@ -26,6 +26,19 @@ arch=$(uname -m)
 [ "${arch}" = "x86_64" ] && arch=amd64
 [ "${arch}" = "aarch64" ] && arch=arm64
 
+codename=$(sudo chroot /mnt/image /bin/sh -c '. /etc/os-release && echo "${VERSION_CODENAME:-}"')
+if [ -z "${codename}" ]; then
+  codename=$(sudo chroot /mnt/image /bin/sh -c 'cut -d/ -f1 /etc/debian_version')
+fi
+backports_suite="${codename}-backports"
+backports_file="/mnt/image/etc/apt/sources.list.d/${backports_suite}.list"
+
+if [ ! -f "${backports_file}" ]; then
+  echo "Adding backports repository: ${backports_suite}..."
+  echo "deb http://deb.debian.org/debian ${backports_suite} main contrib non-free non-free-firmware" | \
+    sudo tee "${backports_file}" >/dev/null
+fi
+
 APT_GET="sudo chroot /mnt/image /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
 sudo DEBIAN_FRONTEND=noninteractive apt-get update
@@ -35,14 +48,24 @@ version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -l | grep '^ii' | \
   awk '{print $2}' | grep '^linux-image-[0-9]' | paste -sd' ' - || true)
 echo "START VERSION: ${version}"
 
-${APT_GET} update
+if ! ${APT_GET} update; then
+  echo "apt-get update failed with backports; removing ${backports_file} and retrying..."
+  sudo rm -f "${backports_file}"
+  ${APT_GET} update
+fi
 ${APT_GET} upgrade
 
 version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -l | grep '^ii' | \
   awk '{print $2}' | grep '^linux-image-[0-9]' | paste -sd' ' - || true)
 echo "AFTER UPGRADE VERSION: ${version}"
 
-${APT_GET} install ${linux_image_deb}
+if sudo chroot /mnt/image /usr/bin/apt-cache policy "${linux_image_deb}" 2>/dev/null | grep -q "${backports_suite}"; then
+  echo "Installing ${linux_image_deb} from ${backports_suite}..."
+  ${APT_GET} install -t "${backports_suite}" "${linux_image_deb}"
+else
+  echo "Installing ${linux_image_deb} from default suite..."
+  ${APT_GET} install "${linux_image_deb}"
+fi
 
 if ! sudo chroot /mnt/image /usr/bin/dpkg -s "${linux_image_deb}" >/dev/null 2>&1; then
   echo "CREATE IMAGE FAILED!!!"
