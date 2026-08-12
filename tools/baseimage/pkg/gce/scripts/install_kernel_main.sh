@@ -26,21 +26,23 @@ arch=$(uname -m)
 [ "${arch}" = "x86_64" ] && arch=amd64
 [ "${arch}" = "aarch64" ] && arch=arm64
 
-sudo apt-get update
-sudo apt-get upgrade -y
+APT_GET="sudo chroot /mnt/image /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+
+sudo DEBIAN_FRONTEND=noninteractive apt-get update
+sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
 version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
   cut -d: -f2 | cut -d" " -f2 )
 echo "START VERSION: ${version}"
 
-sudo chroot /mnt/image /usr/bin/apt-get update
-sudo chroot /mnt/image /usr/bin/apt-get upgrade -y
+${APT_GET} update
+${APT_GET} upgrade
 
 version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
   cut -d: -f2 | cut -d" " -f2 )
 echo "AFTER UPGRADE VERSION: ${version}"
 
-sudo chroot /mnt/image /usr/bin/apt-get install -y ${linux_image_deb}
+${APT_GET} install ${linux_image_deb}
 
 version=$(sudo chroot /mnt/image/ /usr/bin/dpkg -s linux-image-cloud-${arch} | grep ^Depends: | \
   cut -d: -f2 | cut -d" " -f2)
@@ -58,7 +60,7 @@ old_kernels=$(sudo chroot /mnt/image /usr/bin/dpkg -l | grep '^ii' | awk '{print
   grep '^linux-image-' | grep -v "^${linux_image_deb}$" | grep -v "^linux-image-cloud-${arch}$" || true)
 if [ -n "${old_kernels}" ]; then
   echo "Removing old kernel packages: ${old_kernels}"
-  sudo chroot /mnt/image /usr/bin/apt-get purge -y ${old_kernels}
+  ${APT_GET} purge ${old_kernels}
   # update-grub may fail in a chroot; the grub config will be rebuilt
   # when the image boots, so this is non-fatal.
   sudo chroot /mnt/image /bin/sh -c 'command -v update-grub >/dev/null && update-grub || true'
