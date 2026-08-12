@@ -16,6 +16,7 @@
 
 set -x
 set -o errexit
+export DEBIAN_FRONTEND=noninteractive
 
 arch=$(uname -m)
 nvidia_arch=${arch}
@@ -34,12 +35,27 @@ kmodver=$(dpkg -l | grep '^ii' | awk '{print $2}' | \
 apt-get install -y wget
 
 # Dependencies for nvidia-installer
-apt-get install -y \
-  $(echo linux-headers-${kmodver}) \
-  dkms \
-  libglvnd-dev \
-  libc6-dev \
-  pkg-config
+codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
+backports_suite="${codename}-backports"
+
+if [ -n "${codename}" ] && [ -f "/etc/apt/sources.list.d/${backports_suite}.list" ] && \
+   dpkg -s "linux-image-${kmodver}" 2>/dev/null | grep -q "bpo\|${backports_suite}"; then
+  echo "Installing linux-headers from ${backports_suite}..."
+  apt-get install -y -t "${backports_suite}" \
+    "linux-headers-${kmodver}" \
+    dkms \
+    libglvnd-dev \
+    libc6-dev \
+    pkg-config
+else
+  echo "Installing linux-headers from default suite..."
+  apt-get install -y \
+    "linux-headers-${kmodver}" \
+    dkms \
+    libglvnd-dev \
+    libc6-dev \
+    pkg-config
+fi
 
 nvidia_version=570.158.01
 
