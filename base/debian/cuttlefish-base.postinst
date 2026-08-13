@@ -39,6 +39,10 @@ case "$1" in
         /usr/lib/cuttlefish-common/bin/cvdalloc
     setcap cap_setgid=+ep \
         /usr/lib/cuttlefish-common/bin/cvd_refresh_groups
+
+    if [ -d /run/systemd/system ] && systemctl is-active --quiet systemd-networkd; then
+        networkctl reload || true
+    fi
     ;;
 esac
 

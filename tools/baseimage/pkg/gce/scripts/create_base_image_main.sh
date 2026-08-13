@@ -41,6 +41,23 @@ sudo chroot /mnt/image /usr/bin/apt upgrade -y
 # in /tmp by default.
 sudo chroot /mnt/image /usr/bin/systemctl mask tmp.mount
 
+# Ensure iptables uses the nftables backend exclusively to prevent dual-backend
+# iptables-legacy table collisions with cuttlefish nftables NAT.
+sudo chroot /mnt/image /usr/sbin/update-alternatives --set iptables /usr/sbin/iptables-nft || true
+sudo chroot /mnt/image /usr/sbin/update-alternatives --set ip6tables /usr/sbin/ip6tables-nft || true
+sudo chroot /mnt/image /usr/sbin/update-alternatives --set arptables /usr/sbin/arptables-nft || true
+sudo chroot /mnt/image /usr/sbin/update-alternatives --set ebtables /usr/sbin/ebtables-nft || true
+
+# Ignore cuttlefish bridge and tap devices in systemd-networkd
+sudo mkdir -p /mnt/image/etc/systemd/network
+cat << 'EOF' | sudo tee /mnt/image/etc/systemd/network/99-cuttlefish.network > /dev/null
+[Match]
+Name=cvd-*
+
+[Link]
+Unmanaged=yes
+EOF
+
 # Avoid automatic updates during tests.
 # https://manpages.debian.org/trixie/unattended-upgrades/unattended-upgrade.8.en.html
 sudo chroot /mnt/image /usr/bin/apt purge -y unattended-upgrades
