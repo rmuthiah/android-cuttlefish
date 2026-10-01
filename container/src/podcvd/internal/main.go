@@ -101,10 +101,80 @@ func disconnectAdb(ccm CuttlefishContainerManager, groupName string) error {
 	return DisconnectAdb(ccm, *instanceGroup)
 }
 
+func podcvdBaseDirForGroup(ccm CuttlefishContainerManager, groupName string) (string, error) {
+	containerInfo, err := ccm.InspectContainer(context.Background(), ContainerName(groupName))
+	if err != nil {
+		return "", fmt.Errorf("failed to inspect container: %w", err)
+	}
+	attemptID := containerInfo.Config.Labels[labelAttemptID]
+	podcvdBaseDir := containerInfo.Config.Labels[labelBaseDir]
+	if podcvdBaseDir == "" {
+		podcvdBaseDir = filepath.Join("/var/tmp/podcvd", strconv.Itoa(os.Getuid()), attemptID)
+	}
+	return podcvdBaseDir, nil
+}
+
+func rewriteSnapshotMetaPath(snapshotDir, newSnapshotPath string) error {
+	metaPath := filepath.Join(snapshotDir, "snapshot_meta.json")
+	metaBytes, err := os.ReadFile(metaPath)
+	if err != nil {
+		return fmt.Errorf("failed to read %q: %w", metaPath, err)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(metaBytes, &meta); err != nil {
+		return fmt.Errorf("failed to parse %q: %w", metaPath, err)
+	}
+	meta["snapshot_path"] = newSnapshotPath
+	updated, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal %q: %w", metaPath, err)
+	}
+	if err := os.WriteFile(metaPath, updated, 0644); err != nil {
+		return fmt.Errorf("failed to write %q: %w", metaPath, err)
+	}
+	return nil
+}
+
+func stageSnapshotForRestore(ccm CuttlefishContainerManager, cvdArgs *CvdArgs) error {
+	hostSnapshotPath, exists := cvdArgs.GetStringFlagValueOnSubCommandArgs("snapshot_path")
+	if !exists || hostSnapshotPath == "" {
+		return nil
+	}
+	absHostSnapshotPath, err := filepath.Abs(hostSnapshotPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve absolute path for %q: %w", hostSnapshotPath, err)
+	}
+	podcvdBaseDir, err := podcvdBaseDirForGroup(ccm, cvdArgs.CommonArgs.GroupName)
+	if err != nil {
+		return err
+	}
+	snapshotsDir := filepath.Join(podcvdBaseDir, "snapshots")
+	if err := os.RemoveAll(snapshotsDir); err != nil {
+		return fmt.Errorf("failed to clean snapshots staging dir: %w", err)
+	}
+	if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create snapshots staging dir: %w", err)
+	}
+	snapshotID := uuid.New().String()
+	hostStagingPath := filepath.Join(snapshotsDir, snapshotID)
+	containerSnapshotPath := filepath.Join("/podcvd_base/snapshots", snapshotID)
+	if out, err := exec.Command("cp", "-a", absHostSnapshotPath, hostStagingPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to stage snapshot into container base dir: %s: %w", string(out), err)
+	}
+	if err := rewriteSnapshotMetaPath(hostStagingPath, containerSnapshotPath); err != nil {
+		return err
+	}
+	cvdArgs.ReplaceFlagValueOnSubCommandArgs("snapshot_path", containerSnapshotPath)
+	return nil
+}
+
 func handleCreateOrStartExecution(ccm CuttlefishContainerManager, cvdArgs *CvdArgs) error {
 	_, hasConfigFile := cvdArgs.GetStringFlagValueOnSubCommandArgs("config_file")
 	if hasConfigFile {
 		cvdArgs.ReplaceFlagValueOnSubCommandArgs("base_directory", "/podcvd_base")
+	}
+	if err := stageSnapshotForRestore(ccm, cvdArgs); err != nil {
+		return err
 	}
 	args := append([]string{"cvd"}, cvdArgs.SerializeCommonArgs()...)
 	args = append(args, cvdArgs.SubCommandArgs...)
@@ -139,14 +209,9 @@ func handleCreateOrStartExecution(ccm CuttlefishContainerManager, cvdArgs *CvdAr
 		if err := json.Unmarshal(stdoutBuf.Bytes(), &res); err != nil {
 			return fmt.Errorf("failed to unmarshal json: %w", err)
 		}
-		containerInfo, err := ccm.InspectContainer(context.Background(), ContainerName(cvdArgs.CommonArgs.GroupName))
+		podcvdBaseDir, err := podcvdBaseDirForGroup(ccm, cvdArgs.CommonArgs.GroupName)
 		if err != nil {
-			return fmt.Errorf("failed to inspect container: %w", err)
-		}
-		attemptID := containerInfo.Config.Labels[labelAttemptID]
-		podcvdBaseDir := containerInfo.Config.Labels[labelBaseDir]
-		if podcvdBaseDir == "" {
-			podcvdBaseDir = filepath.Join("/var/tmp/podcvd", strconv.Itoa(os.Getuid()), attemptID)
+			return err
 		}
 		UpdateCvdGroupJsonRaw(res, podcvdBaseDir, ip)
 		stdout, err := json.MarshalIndent(res, "", "        ")
@@ -186,6 +251,57 @@ func handleBugreportExecution(ccm CuttlefishContainerManager, cvdArgs *CvdArgs) 
 	return nil
 }
 
+func handleSnapshotTakeExecution(ccm CuttlefishContainerManager, cvdArgs *CvdArgs) error {
+	hostSnapshotPath, exists := cvdArgs.GetStringFlagValueOnSubCommandArgs("snapshot_path")
+	if !exists || hostSnapshotPath == "" {
+		args := append([]string{"cvd"}, cvdArgs.SerializeCommonArgs()...)
+		args = append(args, cvdArgs.SubCommandArgs...)
+		return ccm.ExecOnContainer(context.Background(), ContainerName(cvdArgs.CommonArgs.GroupName), args, os.Stdin, os.Stdout, os.Stderr)
+	}
+	absHostSnapshotPath, err := filepath.Abs(hostSnapshotPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve absolute path for %q: %w", hostSnapshotPath, err)
+	}
+	if _, err := os.Lstat(absHostSnapshotPath); err == nil {
+		if cvdArgs.HasBoolFlagOnSubCommandArgs("force") {
+			if err := os.RemoveAll(absHostSnapshotPath); err != nil {
+				return fmt.Errorf("failed to remove existing snapshot path %q: %w", absHostSnapshotPath, err)
+			}
+		} else {
+			return fmt.Errorf("snapshot path %q already exists", absHostSnapshotPath)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(absHostSnapshotPath), 0755); err != nil {
+		return fmt.Errorf("failed to create parent directory for %q: %w", absHostSnapshotPath, err)
+	}
+	podcvdBaseDir, err := podcvdBaseDirForGroup(ccm, cvdArgs.CommonArgs.GroupName)
+	if err != nil {
+		return err
+	}
+	snapshotsDir := filepath.Join(podcvdBaseDir, "snapshots")
+	if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create snapshots staging dir: %w", err)
+	}
+	snapshotID := uuid.New().String()
+	hostStagingPath := filepath.Join(snapshotsDir, snapshotID)
+	containerSnapshotPath := filepath.Join("/podcvd_base/snapshots", snapshotID)
+	defer os.RemoveAll(hostStagingPath)
+
+	cvdArgs.ReplaceFlagValueOnSubCommandArgs("snapshot_path", containerSnapshotPath)
+	args := append([]string{"cvd"}, cvdArgs.SerializeCommonArgs()...)
+	args = append(args, cvdArgs.SubCommandArgs...)
+	if err := ccm.ExecOnContainer(context.Background(), ContainerName(cvdArgs.CommonArgs.GroupName), args, os.Stdin, os.Stdout, os.Stderr); err != nil {
+		return fmt.Errorf("failed to execute cvd snapshot_take in the container: %w", err)
+	}
+	if out, err := exec.Command("mv", hostStagingPath, absHostSnapshotPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to move snapshot from container staging dir to %q: %s: %w", absHostSnapshotPath, string(out), err)
+	}
+	if err := rewriteSnapshotMetaPath(absHostSnapshotPath, absHostSnapshotPath); err != nil {
+		return err
+	}
+	return nil
+}
+
 func formatLogsList(output string) string {
 	lines := strings.Split(output, "\n")
 	for i, line := range lines {
@@ -210,14 +326,9 @@ func handleLogsExecution(ccm CuttlefishContainerManager, cvdArgs *CvdArgs) error
 	if err := ccm.ExecOnContainer(context.Background(), ContainerName(cvdArgs.CommonArgs.GroupName), args, os.Stdin, &stdoutBuf, os.Stderr); err != nil {
 		return err
 	}
-	containerInfo, err := ccm.InspectContainer(context.Background(), ContainerName(cvdArgs.CommonArgs.GroupName))
+	podcvdBaseDir, err := podcvdBaseDirForGroup(ccm, cvdArgs.CommonArgs.GroupName)
 	if err != nil {
-		return fmt.Errorf("failed to inspect container: %w", err)
-	}
-	attemptID := containerInfo.Config.Labels[labelAttemptID]
-	podcvdBaseDir := containerInfo.Config.Labels[labelBaseDir]
-	if podcvdBaseDir == "" {
-		podcvdBaseDir = filepath.Join("/var/tmp/podcvd", strconv.Itoa(os.Getuid()), attemptID)
+		return err
 	}
 	regex := regexp.MustCompile(`/var/tmp/cvd/[0-9]+/[0-9]+`)
 	translatedOutput := regex.ReplaceAllString(stdoutBuf.String(), podcvdBaseDir)
@@ -256,6 +367,9 @@ func handleSubcommandsForSingleInstanceGroup(ccm CuttlefishContainerManager, cvd
 		if err := disconnectAdb(ccm, cvdArgs.CommonArgs.GroupName); err != nil {
 			return err
 		}
+		if podcvdBaseDir, err := podcvdBaseDirForGroup(ccm, cvdArgs.CommonArgs.GroupName); err == nil {
+			_ = os.RemoveAll(filepath.Join(podcvdBaseDir, "snapshots"))
+		}
 		// If the subcommand is 'remove', it doesn't need to execute cvd on the
 		// container instance as it should be removed in the end.
 		if subcommand == "remove" {
@@ -267,6 +381,8 @@ func handleSubcommandsForSingleInstanceGroup(ccm CuttlefishContainerManager, cvd
 		return handleCreateOrStartExecution(ccm, cvdArgs)
 	case "bugreport":
 		return handleBugreportExecution(ccm, cvdArgs)
+	case "snapshot_take":
+		return handleSnapshotTakeExecution(ccm, cvdArgs)
 	case "logs":
 		return handleLogsExecution(ccm, cvdArgs)
 	default:

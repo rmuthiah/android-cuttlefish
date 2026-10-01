@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -110,6 +111,10 @@ func (a *CvdArgs) HasHelpFlagOnSubCommandArgs() bool {
 
 func (a *CvdArgs) GetStringFlagValueOnSubCommandArgs(flagName string) (string, bool) {
 	return getStringFlagValue(a.SubCommandArgs, flagName)
+}
+
+func (a *CvdArgs) HasBoolFlagOnSubCommandArgs(flagName string) bool {
+	return hasBoolFlag(a.SubCommandArgs, flagName)
 }
 
 func (a *CvdArgs) AppendFlagValueOnSubCommandArgs(flagName, value string) {
@@ -237,4 +242,43 @@ func getStringFlagValue(args []string, flagName string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func hasBoolFlag(args []string, flagName string) bool {
+	trueFlags := map[string]struct{}{
+		"-" + flagName:  {},
+		"--" + flagName: {},
+	}
+	falseFlags := map[string]struct{}{
+		"-no" + flagName:  {},
+		"--no" + flagName: {},
+	}
+	result := false
+	for idx := 0; idx < len(args); idx++ {
+		arg := args[idx]
+		if _, exists := trueFlags[arg]; exists {
+			if idx+1 < len(args) {
+				if val, err := strconv.ParseBool(args[idx+1]); err == nil {
+					result = val
+					idx++
+					continue
+				}
+			}
+			result = true
+			continue
+		}
+		if _, exists := falseFlags[arg]; exists {
+			result = false
+			continue
+		}
+		splitArg := strings.SplitN(arg, "=", 2)
+		if len(splitArg) == 2 {
+			if _, exists := trueFlags[splitArg[0]]; exists {
+				if val, err := strconv.ParseBool(splitArg[1]); err == nil {
+					result = val
+				}
+			}
+		}
+	}
+	return result
 }
